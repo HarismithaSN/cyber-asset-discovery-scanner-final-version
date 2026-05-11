@@ -1,0 +1,205 @@
+package com.internship.tool.controller;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.internship.tool.model.Asset;
+import com.internship.tool.service.AssetService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+/**
+ * 8 JUnit 5 integration tests for AssetController using MockMvc.
+ * Run with: mvn test -Dgroups=integration
+ */
+@Tag("integration")
+@WebMvcTest(AssetController.class)
+class AssetControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockBean
+    private AssetService assetService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    private Asset sampleAsset;
+
+    @BeforeEach
+    void setUp() {
+        sampleAsset = new Asset("Web Server 01", "SERVER", "192.168.1.10", "ACTIVE", 45);
+        // sampleAsset.setId(1L); // Remove this - id is auto-generated
+    }
+
+    // ─── Test 1: Get All Assets Paginated ──────────────────────────────────────
+
+    @Test
+    @DisplayName("1. GET /api/assets/all — returns paginated assets")
+    void getAllAssets_returnsPaginated() throws Exception {
+        Pageable pageable = PageRequest.of(0, 10);
+        Asset asset2 = new Asset("Database Server", "SERVER", "192.168.1.11", "ACTIVE", 30);
+        // asset2.setId(2L); // Remove this - id is auto-generated
+        Page<Asset> page = new PageImpl<>(Arrays.asList(sampleAsset, asset2), pageable, 2);
+
+        when(assetService.getAllAssets(any(Pageable.class))).thenReturn(page);
+
+        mockMvc.perform(get("/api/assets/all"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.content").isArray())
+                .andExpect(jsonPath("$.content[0].name").value("Web Server 01"))
+                .andExpect(jsonPath("$.totalElements").value(2));
+
+        verify(assetService).getAllAssets(any(Pageable.class));
+    }
+
+    // ─── Test 2: Search Assets ─────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("2. GET /api/assets/search — returns filtered assets")
+    void searchAssets_returnsFiltered() throws Exception {
+        Pageable pageable = PageRequest.of(0, 5);
+        Page<Asset> page = new PageImpl<>(Arrays.asList(sampleAsset), pageable, 1);
+
+        when(assetService.searchAssets(eq("server"), eq("ACTIVE"), isNull(), isNull(), any(Pageable.class))).thenReturn(page);
+
+        mockMvc.perform(get("/api/assets/search")
+                        .param("q", "server")
+                        .param("status", "ACTIVE")
+                        .param("page", "0")
+                        .param("size", "5"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.content[0].name").value("Web Server 01"));
+
+        verify(assetService).searchAssets(eq("server"), eq("ACTIVE"), isNull(), isNull(), any(Pageable.class));
+    }
+
+    // ─── Test 3: Get Asset Stats ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("3. GET /api/assets/stats — returns asset statistics")
+    void getStats_returnsStatistics() throws Exception {
+        Map<String, Long> stats = new HashMap<>();
+        stats.put("totalAssets", 25L);
+        stats.put("activeAssets", 15L);
+        stats.put("inactiveAssets", 7L);
+        stats.put("highRiskAssets", 3L);
+
+        when(assetService.countAllAssets()).thenReturn(25L);
+        when(assetService.countByStatus("ACTIVE")).thenReturn(15L);
+        when(assetService.countByStatus("INACTIVE")).thenReturn(7L);
+        when(assetService.countHighRiskAssets()).thenReturn(3L);
+
+        mockMvc.perform(get("/api/assets/stats"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.totalAssets").value(25))
+                .andExpect(jsonPath("$.activeAssets").value(15))
+                .andExpect(jsonPath("$.inactiveAssets").value(7))
+                .andExpect(jsonPath("$.highRiskAssets").value(3));
+    }
+
+    // ─── Test 4: Get Asset By ID Success ───────────────────────────────────────
+
+    @Test
+    @DisplayName("4. GET /api/assets/{id} — returns asset by ID")
+    void getAssetById_success() throws Exception {
+        when(assetService.getAssetById(1L)).thenReturn(sampleAsset);
+
+        mockMvc.perform(get("/api/assets/1"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.name").value("Web Server 01"))
+                .andExpect(jsonPath("$.type").value("SERVER"))
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+
+        verify(assetService).getAssetById(1L);
+    }
+
+    // ─── Test 5: Get Asset By ID Not Found ─────────────────────────────────────
+
+    @Test
+    @DisplayName("5. GET /api/assets/{id} — returns 500 when asset not found")
+    void getAssetById_notFound() throws Exception {
+        when(assetService.getAssetById(999L)).thenThrow(new RuntimeException("Asset not found"));
+
+        mockMvc.perform(get("/api/assets/999"))
+                .andExpect(status().isInternalServerError());
+
+        verify(assetService).getAssetById(999L);
+    }
+
+    // ─── Test 6: Create Asset ──────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("6. POST /api/assets — creates new asset")
+    void addAsset_success() throws Exception {
+        Asset newAsset = new Asset("New Server", "SERVER", "192.168.1.12", "ACTIVE", 20);
+
+        when(assetService.addAsset(any(Asset.class))).thenReturn(sampleAsset);
+
+        mockMvc.perform(post("/api/assets")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(newAsset)))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.name").value("Web Server 01"));
+
+        verify(assetService).addAsset(any(Asset.class));
+    }
+
+    // ─── Test 7: Update Asset ──────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("7. PUT /api/assets/{id} — updates existing asset")
+    void updateAsset_success() throws Exception {
+        Asset updateDetails = new Asset("Updated Server", "WORKSTATION", "192.168.1.13", "INACTIVE", 80);
+
+        when(assetService.updateAsset(eq(1L), any(Asset.class))).thenReturn(sampleAsset);
+
+        mockMvc.perform(put("/api/assets/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateDetails)))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id").value(1));
+
+        verify(assetService).updateAsset(eq(1L), any(Asset.class));
+    }
+
+    // ─── Test 8: Delete Asset ──────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("8. DELETE /api/assets/{id} — deletes asset")
+    void deleteAsset_success() throws Exception {
+        doNothing().when(assetService).deleteAsset(1L);
+
+        mockMvc.perform(delete("/api/assets/1"))
+                .andExpect(status().isOk());
+
+        verify(assetService).deleteAsset(1L);
+    }
+}

@@ -1,0 +1,134 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Cyber Asset Discovery Scanner — Docker Compose
+# Services: postgres | redis | backend | ai-service | frontend
+# Run: docker-compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── 1. PostgreSQL Database ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: tool95-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-tool95}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-tool95}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── 2. Redis Cache ──────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: tool95-redis
+    restart: unless-stopped
+    command: >
+      sh -c '
+      if [ -n "${REDIS_PASSWORD}" ]; then
+        exec redis-server --requirepass "${REDIS_PASSWORD}" --maxmemory 256mb --maxmemory-policy allkeys-lru;
+      else
+        exec redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru;
+      fi'
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -n \"${REDIS_PASSWORD}\" ]; then redis-cli -a \"${REDIS_PASSWORD}\" ping; else redis-cli ping; fi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── 3. Spring Boot Backend ──────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tool95-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-tool95}
+      DB_DRIVER: org.postgresql.Driver
+      HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
+      DB_NAME: ${DB_NAME:-tool95}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_so_it_is_secure_32bytes}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-86400000}
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ── 4. Flask AI Service ─────────────────────────────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: tool95-ai-service
+    restart: unless-stopped
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      FLASK_ENV: ${FLASK_ENV:-production}
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── 5. React/Vite Frontend ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tool95-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
